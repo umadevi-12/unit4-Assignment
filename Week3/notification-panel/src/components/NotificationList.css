@@ -1,0 +1,18 @@
+.notification-list {
+  list-style-type: none;
+  padding: 0;
+}
+
+.notification-list li {
+  padding: 10px;
+  border-bottom: 1px solid #ccc;
+}
+
+.unread {
+  font-weight: bold;
+  background-color: #f0f8ff;
+}
+
+.read {
+  color: #777;
+}

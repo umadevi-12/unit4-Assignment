@@ -1,0 +1,24 @@
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+.app-container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 15px;
+}
+
+.input-box {
+  padding: 10px;
+  font-size: 16px;
+  width: 250px;
+}
+
+.focused-text {
+  color: green;
+  text-align: center;
+}

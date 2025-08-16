@@ -1,0 +1,245 @@
+%%html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Indian Flag Image Validator (BIS-spec checks)</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: #12182e;
+      --muted: #9aa3b2;
+      --ok: #16a34a;
+      --fail: #dc2626;
+      --warn: #ca8a04;
+    }
+    body { margin:0; font:15px/1.45 system-ui,sans-serif; color:#e6eaf2; background: radial-gradient(1200px 700px at 15% 10%, #1c2544 0%, #0b1020 55%, #05070f 100%); }
+    header { padding: 24px 18px 8px; text-align: center; }
+    header h1 { margin: 0 0 6px; font-size: 22px; }
+    header p { margin: 0; color: var(--muted); }
+    .wrap { max-width: 1100px; margin: 18px auto 40px; padding: 0 16px; }
+    .card { background: var(--card); border-radius:16px; padding:16px; border:1px solid rgba(255,255,255,.05); }
+    .grid { display:grid; grid-template-columns:1fr; gap:14px; }
+    @media (min-width:960px) { .grid { grid-template-columns:1.2fr .8fr; } }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+    label.inline { font-weight:600; }
+    input[type="file"], input[type="text"] { padding:8px 10px; border-radius:10px; border:1px solid #243158; background:#0e1530; color:#e6eaf2; flex:1; }
+    button { cursor:pointer; border:0; border-radius:12px; padding:10px 14px; font-weight:700; }
+    button.primary { background:#2563eb; color:white; }
+    button.secondary { background:#1f2937; color:white; }
+    button.ghost { background:transparent; color:#cbd5e1; border:1px dashed #334155; }
+    .pill { display:inline-flex; padding:4px 8px; border-radius:999px; font-weight:700; font-size:12px; }
+    .ok { background: rgba(22,163,74,.24); color:#6ee7b7; border:1px solid rgba(22,163,74,.4); }
+    .fail { background: rgba(220,38,38,.24); color:#fca5a5; border:1px solid rgba(220,38,38,.4); }
+    pre { margin:0; padding:10px 12px; background:#0c132c; border-radius:12px; overflow:auto; max-height:62vh; }
+    canvas { background:#0e1530; border:1px dashed #334155; border-radius:10px; width:100%; height:auto; }
+    .footer { text-align:center; color:#9aa3b2; font-size:12px; margin-top:20px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1> Indian Flag Image Validator</h1>
+  <p class="hint">Upload or paste a URL → Validate according to BIS specs.</p>
+</header>
+
+<div class="wrap">
+  <div class="grid">
+    <section class="card">
+      <div class="row">
+        <label class="inline">Upload:</label>
+        <input id="fileInput" type="file" accept="image/*">
+      </div>
+      <div class="row">
+        <label class="inline">or URL:</label>
+        <input id="urlInput" type="text" placeholder="https://upload.wikimedia.org/wikipedia/en/4/41/Flag_of_India.svg">
+        <button class="secondary" id="loadUrlBtn">Load</button>
+      </div>
+      <div class="row">
+        <button class="primary" id="validateBtn">Validate</button>
+        <button class="ghost" id="downloadJsonBtn">Download JSON</button>
+        <span id="statusPill" class="pill warn">Idle</span>
+      </div>
+      <pre id="report">{ /* JSON report will appear here */ }</pre>
+    </section>
+    <section class="card">
+      <canvas id="canvas" width="640" height="426"></canvas>
+    </section>
+  </div>
+  <div class="footer">Made with ❤️ | Runs entirely in your browser</div>
+</div>
+
+<script>
+const REF = { ratio:3/2, saffron:[255,153,51], white:[255,255,255], green:[19,136,8], navy:[0,0,128] };
+const TOL = { aspect:0.01, stripeShare:0.01, color:0.15, diameter:0.25, centerFrac:0.005 };
+
+const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d',{willReadFrequently:true});
+let originalImg=new Image();
+
+function rgbDistance01(a,b){ return Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2+(a[2]-b[2])**2)/(Math.sqrt(3)*255); }
+function pct(n){ return (n*100).toFixed(2)+'%'; }
+function clamp(v,lo,hi){ return Math.max(lo,Math.min(hi,v)); }
+
+function getPixel(data,x,y){ x=clamp(x|0,0,data.width-1); y=clamp(y|0,0,data.height-1); const i=(y*data.width+x)*4; return [data.data[i],data.data[i+1],data.data[i+2]]; }
+function avgColorRegion(data,x0,y0,x1,y1,step=4,maskNavy=false){
+  let r=0,g=0,b=0,n=0;
+  for(let y=y0;y<y1;y+=step){
+    for(let x=x0;x<x1;x+=step){
+      const c=getPixel(data,x,y);
+      if(maskNavy && rgbDistance01(c,REF.navy)<=TOL.color) continue;
+      r+=c[0]; g+=c[1]; b+=c[2]; n++;
+    }
+  }
+  return n?[r/n,g/n,b/n]:[0,0,0];
+}
+function closestStripeColor(c){
+  const dS=rgbDistance01(c,REF.saffron); const dW=rgbDistance01(c,REF.white); const dG=rgbDistance01(c,REF.green);
+  return (Math.min(dS,dW,dG)===dS)?'saffron':(Math.min(dS,dW,dG)===dW?'white':'green');
+}
+function detectStripes(data){
+  const H=data.height,W=data.width; let labels=[];
+  const stepX=Math.ceil(W/25);
+  for(let y=0;y<H;y++){
+    let sum=[0,0,0];
+    for(let x=0;x<W;x+=stepX){ const p=getPixel(data,x,y); sum[0]+=p[0]; sum[1]+=p[1]; sum[2]+=p[2]; }
+    const avg=[sum[0]/(W/stepX),sum[1]/(W/stepX),sum[2]/(W/stepX)];
+    labels.push(closestStripeColor(avg));
+  }
+  let y1=-1,y2=-1;
+  for(let y=1;y<H;y++){ if(y1<0 && labels[y]==='white') y1=y; if(y1>0 && y2<0 && labels[y]==='green') y2=y; }
+  if(y1<0) y1=Math.round(H/3); if(y2<0) y2=2*Math.round(H/3);
+  const topH=y1, midH=y2-y1, botH=H-y2;
+  const proportions={top:topH/H,middle:midH/H,bottom:botH/H};
+  const stripeShareOK = Math.abs(proportions.top-1/3)<=TOL.stripeShare && Math.abs(proportions.middle-1/3)<=TOL.stripeShare && Math.abs(proportions.bottom-1/3)<=TOL.stripeShare;
+  const orderOK = labels[0]==='saffron' && labels[H-1]==='green';
+  const topAvg = avgColorRegion(data,0,0,W,topH);
+  const midAvg = avgColorRegion(data,0,topH,W,topH+midH,4,true);
+  const botAvg = avgColorRegion(data,0,topH+midH,W,H);
+  return { proportions, stripeShareOK, orderOK, dev:{saffron:rgbDistance01(topAvg,REF.saffron), white:rgbDistance01(midAvg,REF.white), green:rgbDistance01(botAvg,REF.green)}, topH, midH };
+}
+
+function detectChakra(data,stripe){
+  const W=data.width,H=data.height;
+  const whiteY0=stripe.topH,whiteY1=stripe.topH+stripe.midH;
+  let navyPixels=[],minX=W,maxX=-1,minY=H,maxY=-1;
+  for(let y=whiteY0; y<whiteY1; y++){
+    for(let x=0; x<W; x++){
+      const p = getPixel(data,x,y);
+      if(rgbDistance01(p,REF.navy) <= TOL.color){ navyPixels.push([x,y,p[0],p[1],p[2]]); minX=Math.min(minX,x); maxX=Math.max(maxX,x); minY=Math.min(minY,y); maxY=Math.max(maxY,y); }
+    }
+  }
+  if(minX>maxX) return { present:false };
+  const cx=(minX+maxX)/2, cy=(minY+maxY)/2, radius=Math.max(maxX-minX,maxY-minY)/2;
+  const diameterPx=radius*2;
+  const expectedDiameter=0.75*(whiteY1-whiteY0);
+  const diameterDev=Math.abs(diameterPx-expectedDiameter)/expectedDiameter;
+  const centerTolPx=Math.max(2,TOL.centerFrac*Math.min(W,H));
+  const offX=cx-W/2, offY=cy-H/2;
+  let angleBuckets = new Array(24).fill(0);
+  navyPixels.forEach(p=>{ const dx=p[0]-cx; const dy=p[1]-cy; const angle=(Math.atan2(dy,dx)+2*Math.PI)%(2*Math.PI); const bucket=Math.floor(angle/(2*Math.PI/24)); angleBuckets[bucket]++; });
+  const spokeCount=angleBuckets.filter(v=>v>2).length;
+  const avg = navyPixels.reduce((acc,p)=>[acc[0]+p[2],acc[1]+p[3],acc[2]+p[4]],[0,0,0]).map(v=>v/navyPixels.length);
+  const navyDev=rgbDistance01(avg,REF.navy);
+  return { present:true, cx, cy, offX, offY, centeredOK:Math.abs(offX)<=centerTolPx && Math.abs(offY)<=centerTolPx, centerTolPx, diameterPx, expectedDiameter, diameterOK:diameterDev<=TOL.diameter, diameterDev, spokesOK:spokeCount>=23 && spokeCount<=25, spokeCount, navyDev };
+}
+
+function drawHighlights(stripes,chakra){
+  if(!stripes.stripeShareOK || !stripes.orderOK){ ctx.strokeStyle='rgba(255,0,0,0.7)'; ctx.lineWidth=3; ctx.strokeRect(0,0,canvas.width,stripes.topH); ctx.strokeRect(0,stripes.topH,canvas.width,stripes.midH); ctx.strokeRect(0,stripes.topH+stripes.midH,canvas.width,canvas.height-(stripes.topH+stripes.midH)); }
+  if(chakra.present && (!chakra.centeredOK || !chakra.diameterOK || !chakra.spokesOK)){ ctx.strokeStyle='rgba(0,255,255,0.8)'; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(chakra.cx,chakra.cy,chakra.diameterPx/2,0,2*Math.PI); ctx.stroke(); }
+}
+
+function validateFlag(){
+  const t0=performance.now();
+  const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const ratio=canvas.width/canvas.height;
+  const aspectOK=Math.abs(ratio-REF.ratio)/REF.ratio<=TOL.aspect;
+  const stripes=detectStripes(imgData);
+  const chakra=detectChakra(imgData,stripes);
+  const report={
+    meta:{width:canvas.width,height:canvas.height,processed_ms:Math.round(performance.now()-t0)},
+    aspect_ratio:{status:aspectOK?'pass':'fail',actual:ratio.toFixed(4)},
+    colors:{ saffron:{status:stripes.dev.saffron<=TOL.color?'pass':'fail',deviation:pct(stripes.dev.saffron)}, white:{status:stripes.dev.white<=TOL.color?'pass':'fail',deviation:pct(stripes.dev.white)}, green:{status:stripes.dev.green<=TOL.color?'pass':'fail',deviation:pct(stripes.dev.green)}, chakra_blue:{status:chakra.present?'pass':'fail',deviation:pct(chakra.navyDev)} },
+    stripe_proportion:{status:stripes.stripeShareOK&&stripes.orderOK?'pass':'fail', top:stripes.proportions.top.toFixed(4), middle:stripes.proportions.middle.toFixed(4), bottom:stripes.proportions.bottom.toFixed(4), order:'Saffron-White-Green'},
+    chakra_position:{status:chakra.present&&chakra.centeredOK?'pass':'fail', offset_x:Math.round(chakra.offX)+'px', offset_y:Math.round(chakra.offY)+'px', tolerance_px:Math.round(chakra.centerTolPx)+'px'},
+    chakra_diameter:{status:chakra.present&&chakra.diameterOK?'pass':'fail', expected_px:Math.round(chakra.expectedDiameter), actual_px:Math.round(chakra.diameterPx), deviation:pct(chakra.diameterDev)},
+    chakra_spokes:{status:chakra.present&&chakra.spokesOK?'pass':'fail',detected:chakra.spokeCount}
+  };
+  const allPass=['aspect_ratio','colors.saffron','colors.white','colors.green','colors.chakra_blue','stripe_proportion','chakra_position','chakra_diameter','chakra_spokes'].every(k=>{ if(k.includes('.')){ const parts=k.split('.'); return report[parts[0]][parts[1]].status==='pass'; } return report[k].status==='pass'; });
+  const pill=document.getElementById('statusPill'); pill.textContent=allPass?'PASS':'FAIL';
+  pill.className='pill '+(allPass?'ok':'fail');
+
+  // redraw image and highlights
+  ctx.drawImage(originalImg,0,0,canvas.width,canvas.height);
+  drawHighlights(stripes,chakra);
+
+  document.getElementById('report').textContent=JSON.stringify(report,null,2);
+
+  return report;
+}
+
+function loadFromURL(url, autoValidate = false) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+
+  img.onload = () => {
+    const maxW = 640, maxH = 426;
+    let w = img.width, h = img.height;
+    let scale = Math.min(maxW / w, maxH / h);
+
+    canvas.width = maxW;
+    canvas.height = maxH;
+
+
+    ctx.fillStyle = "#0e1530";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    originalImg = img;
+
+
+    ctx.drawImage(originalImg, 0, 0, canvas.width, canvas.height);
+
+
+    if (autoValidate) {
+      setTimeout(validateFlag, 50);
+    }
+  };
+
+  img.onerror = () => {
+    alert('⚠️ Failed to load image. Check URL or CORS.');
+  };
+
+  img.src = url;
+}
+
+
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if(f) loadFromURL(URL.createObjectURL(f), true);
+});
+
+document.getElementById('loadUrlBtn').addEventListener('click', ()=>{
+  const u=document.getElementById('urlInput').value.trim();
+  if(u) loadFromURL(u,true);
+});
+
+document.getElementById('urlInput').addEventListener('input', e=>{
+  const u=e.target.value.trim();
+  if(u) loadFromURL(u,false);
+});
+
+document.getElementById('validateBtn').addEventListener('click',validateFlag);
+
+document.getElementById('downloadJsonBtn').addEventListener('click', ()=>{
+  const text=document.getElementById('report').textContent;
+  const blob=new Blob([text],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='flag_validation_report.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+</script>
+</body>
+</html>

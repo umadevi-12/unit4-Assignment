@@ -1,0 +1,22 @@
+/* Reset some default browser styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: sans-serif;
+}
+
+body {
+  background-color: #f4f6f9;
+  height: 100vh;
+  display: flex;
+  justify-content: center;  /* centers horizontally */
+  align-items: center;      /* centers vertically */
+}
+
+#root {
+  width: 100%;
+  max-width: 500px;   /* keeps content compact */
+  text-align: center; /* centers text inside */
+  padding: 20px;
+}
